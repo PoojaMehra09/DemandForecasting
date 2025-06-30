@@ -44,9 +44,9 @@ else:
 
 # --- APPLY FILTERS ---
 mask = (
-    (df['Store'].isin(selected_stores) if stores.any() else True) &
-    (df['Category'].isin(selected_categories) if categories.any() else True) &
-    (df['Product'].isin(selected_products) if products.any() else True)
+    (df['Store'].isin(selected_stores) if 'Store' in df.columns and len(stores) > 0 else True) &
+    (df['Category'].isin(selected_categories) if 'Category' in df.columns and len(categories) > 0 else True) &
+    (df['Product'].isin(selected_products) if 'Product' in df.columns and len(products) > 0 else True)
 )
 if selected_dates and date_col:
     mask &= (df[date_col] >= pd.to_datetime(selected_dates[0])) & (df[date_col] <= pd.to_datetime(selected_dates[1]))
