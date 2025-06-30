@@ -1,152 +1,237 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# ----------- LOAD DATA -----------
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Retail Inventory & Demand Dashboard", layout="wide")
+
+# --- LOAD DATA ---
 @st.cache_data
 def load_data():
     df = pd.read_excel("retail_store_inventory.xlsx")
-    # Add date conversion if needed
-    if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'])
-    return df
+    # Standardize column names for ease of use
+    df.columns = [col.strip() for col in df.columns]
+    # Convert date column if exists
+    for col in df.columns:
+        if 'date' in col.lower():
+            df[col] = pd.to_datetime(df[col])
+            date_col = col
+            break
+    else:
+        date_col = None
+    return df, date_col
 
-df = load_data()
+df, date_col = load_data()
 
-# ----------- SIDEBAR FILTERS -----------
-st.sidebar.title("🔎 Filter Data")
+# --- SIDEBAR FILTERS ---
+st.sidebar.title("🔎 Filters")
 stores = df['Store'].unique() if 'Store' in df.columns else []
 categories = df['Category'].unique() if 'Category' in df.columns else []
 products = df['Product'].unique() if 'Product' in df.columns else []
 
-selected_stores = st.sidebar.multiselect("Select Store(s):", stores, default=stores)
-selected_categories = st.sidebar.multiselect("Select Category(ies):", categories, default=categories)
-selected_products = st.sidebar.multiselect("Select Product(s):", products, default=products)
+selected_stores = st.sidebar.multiselect("Select Store(s):", stores, default=list(stores)[:5] if len(stores) > 5 else stores)
+selected_categories = st.sidebar.multiselect("Select Category(ies):", categories, default=list(categories)[:5] if len(categories) > 5 else categories)
+selected_products = st.sidebar.multiselect("Select Product(s):", products, default=list(products)[:5] if len(products) > 5 else products)
 
-if 'Date' in df.columns:
-    min_date = df['Date'].min()
-    max_date = df['Date'].max()
+if date_col:
+    min_date = df[date_col].min()
+    max_date = df[date_col].max()
     selected_dates = st.sidebar.date_input("Select Date Range:", [min_date, max_date], min_value=min_date, max_value=max_date)
 else:
     selected_dates = None
 
-# Apply filters
+# --- APPLY FILTERS ---
 mask = (
     (df['Store'].isin(selected_stores) if stores.any() else True) &
     (df['Category'].isin(selected_categories) if categories.any() else True) &
     (df['Product'].isin(selected_products) if products.any() else True)
 )
-if selected_dates and 'Date' in df.columns:
-    mask &= (df['Date'] >= pd.to_datetime(selected_dates[0])) & (df['Date'] <= pd.to_datetime(selected_dates[1]))
+if selected_dates and date_col:
+    mask &= (df[date_col] >= pd.to_datetime(selected_dates[0])) & (df[date_col] <= pd.to_datetime(selected_dates[1]))
 
 filtered_df = df[mask]
 
-# ----------- DASHBOARD LAYOUT -----------
+# --- HEADER ---
 st.title("🏪 Retail Store Inventory & Demand Insights Dashboard")
-st.markdown(
-    "This dashboard provides micro and macro analysis of retail store inventory and demand, "
-    "enabling Supply Chain leaders and stakeholders to drive data-backed decisions."
-)
+st.markdown("""
+This dashboard delivers detailed micro and macro analysis on retail inventory, demand, and supply chain health.
+Use the left-side filters to drill down by store, category, product, and date.
+""")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Overview KPIs", "Demand & Inventory Trends", "Product/Category Analysis",
-    "Store Analysis", "Advanced & Custom"
+# --- TABS ---
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "KPIs & Overview", "Demand & Inventory Trends", "Product Insights",
+    "Store Insights", "Category Insights", "Advanced Analysis"
 ])
 
-# ----------- TAB 1: OVERVIEW KPIs -----------
+# --- TAB 1: KPIs & OVERVIEW ---
 with tab1:
-    st.header("🔗 High-Level KPIs & Trends")
-    st.markdown("These KPIs provide a snapshot of inventory, demand, and stock health across selected stores, products, and dates.")
+    st.header("📊 Key Performance Indicators")
+    st.markdown("High-level KPIs summarizing demand, inventory, sales, and stock health for your selected filters.")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Total Demand Forecast", int(filtered_df['Demand Forecast'].sum()))
+    if 'Stock' in filtered_df.columns:
+        col2.metric("Total Stock", int(filtered_df['Stock'].sum()))
+    if 'Sales' in filtered_df.columns:
+        col3.metric("Total Sales", int(filtered_df['Sales'].sum()))
+    if 'Stockout' in filtered_df.columns:
+        col4.metric("Stockout Days", int(filtered_df['Stockout'].sum()))
+    if date_col:
+        days = (filtered_df[date_col].max() - filtered_df[date_col].min()).days + 1
+        col5.metric("Date Range (days)", days)
+    st.markdown("These KPIs update instantly with your chosen filters.")
 
-    kpi1 = filtered_df['Demand Forecast'].sum()
-    kpi2 = filtered_df['Stock'].sum() if 'Stock' in filtered_df.columns else 0
-    kpi3 = filtered_df['Sales'].sum() if 'Sales' in filtered_df.columns else 0
-    kpi4 = (filtered_df['Stockout'].sum() if 'Stockout' in filtered_df.columns else 0)
+    st.markdown("**Data Preview** – First 100 Rows")
+    st.dataframe(filtered_df.head(100), use_container_width=True)
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Demand Forecast", int(kpi1))
-    col2.metric("Total Stock Available", int(kpi2))
-    col3.metric("Total Sales", int(kpi3))
-    col4.metric("Stockout Days", int(kpi4))
-
-    st.markdown("**Tip:** Adjust the filters on the left to update these KPIs for specific segments.")
-
-# ----------- TAB 2: DEMAND & INVENTORY TRENDS -----------
+# --- TAB 2: DEMAND & INVENTORY TRENDS ---
 with tab2:
-    st.header("📈 Demand vs Inventory Trends")
-    st.markdown("Visualize trends for demand forecast, stock, and sales to spot gaps and patterns over time.")
-
-    if 'Date' in filtered_df.columns:
-        st.markdown("**Line Chart:** Daily Demand Forecast, Stock, and Sales")
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=filtered_df['Date'], y=filtered_df['Demand Forecast'], name='Demand Forecast', mode='lines+markers'))
+    st.header("📈 Demand vs Inventory Over Time")
+    st.markdown("Visualize daily trends in forecasted demand, stock, and sales. Spot seasonality, gaps, and spikes.")
+    if date_col:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=filtered_df[date_col], y=filtered_df['Demand Forecast'], name='Demand Forecast', mode='lines+markers'))
         if 'Stock' in filtered_df.columns:
-            fig1.add_trace(go.Scatter(x=filtered_df['Date'], y=filtered_df['Stock'], name='Stock', mode='lines+markers'))
+            fig.add_trace(go.Scatter(x=filtered_df[date_col], y=filtered_df['Stock'], name='Stock', mode='lines+markers'))
         if 'Sales' in filtered_df.columns:
-            fig1.add_trace(go.Scatter(x=filtered_df['Date'], y=filtered_df['Sales'], name='Sales', mode='lines+markers'))
-        st.plotly_chart(fig1, use_container_width=True)
+            fig.add_trace(go.Scatter(x=filtered_df[date_col], y=filtered_df['Sales'], name='Sales', mode='lines+markers'))
+        fig.update_layout(xaxis_title='Date', yaxis_title='Value')
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Rolling average demand
-    st.markdown("**Bar Chart:** Top 10 Days by Demand Forecast")
-    if 'Date' in filtered_df.columns:
-        top_demand = filtered_df.groupby('Date')['Demand Forecast'].sum().nlargest(10)
-        fig2 = px.bar(top_demand, y=top_demand.values, x=top_demand.index, labels={"x": "Date", "y": "Total Demand"})
+        # 7-day rolling average
+        st.markdown("**7-Day Rolling Avg: Demand Forecast**")
+        if len(filtered_df) > 7:
+            roll = filtered_df[[date_col, 'Demand Forecast']].set_index(date_col).sort_index().rolling('7D').mean().dropna()
+            st.line_chart(roll, use_container_width=True)
+    else:
+        st.info("No date column detected for time series trends.")
+
+    st.markdown("**Top 10 Highest Demand Days**")
+    if date_col:
+        top_demand = filtered_df.groupby(date_col)['Demand Forecast'].sum().nlargest(10)
+        fig2 = px.bar(top_demand, x=top_demand.index, y=top_demand.values, labels={"x": "Date", "y": "Total Demand"})
         st.plotly_chart(fig2, use_container_width=True)
 
-# ----------- TAB 3: PRODUCT / CATEGORY ANALYSIS -----------
+# --- TAB 3: PRODUCT INSIGHTS ---
 with tab3:
-    st.header("🛒 Product & Category Insights")
-    st.markdown("Identify which products and categories drive most demand and inventory movement.")
-
-    if 'Product' in filtered_df.columns and 'Demand Forecast' in filtered_df.columns:
-        st.markdown("**Bar Chart:** Top 10 Products by Forecasted Demand")
+    st.header("🛒 Product-level Analysis")
+    st.markdown("Uncover top- and bottom-performing products by demand, sales, and stock.")
+    if 'Product' in filtered_df.columns:
+        # Top 10 products by demand
         prod_demand = filtered_df.groupby('Product')['Demand Forecast'].sum().nlargest(10)
-        fig3 = px.bar(prod_demand, y=prod_demand.values, x=prod_demand.index, labels={"x": "Product", "y": "Total Demand"})
+        st.markdown("**Top 10 Products by Demand Forecast**")
+        fig3 = px.bar(prod_demand, x=prod_demand.index, y=prod_demand.values, labels={"x": "Product", "y": "Total Demand"})
         st.plotly_chart(fig3, use_container_width=True)
 
-    if 'Category' in filtered_df.columns and 'Sales' in filtered_df.columns:
-        st.markdown("**Pie Chart:** Sales Share by Category")
-        cat_sales = filtered_df.groupby('Category')['Sales'].sum()
-        fig4 = px.pie(cat_sales, values=cat_sales.values, names=cat_sales.index)
-        st.plotly_chart(fig4, use_container_width=True)
+        if 'Sales' in filtered_df.columns:
+            prod_sales = filtered_df.groupby('Product')['Sales'].sum().nlargest(10)
+            st.markdown("**Top 10 Products by Sales**")
+            fig4 = px.bar(prod_sales, x=prod_sales.index, y=prod_sales.values, labels={"x": "Product", "y": "Total Sales"})
+            st.plotly_chart(fig4, use_container_width=True)
+        
+        if 'Stock' in filtered_df.columns:
+            low_stock = filtered_df.groupby('Product')['Stock'].sum().nsmallest(10)
+            st.markdown("**10 Lowest Stock Products**")
+            fig5 = px.bar(low_stock, x=low_stock.index, y=low_stock.values, labels={"x": "Product", "y": "Total Stock"})
+            st.plotly_chart(fig5, use_container_width=True)
 
-# ----------- TAB 4: STORE ANALYSIS -----------
+        # ABC analysis (Pareto 80/20)
+        st.markdown("**ABC Analysis: Cumulative Demand by Product**")
+        abc = prod_demand.sort_values(ascending=False)
+        cum_pct = abc.cumsum() / abc.sum()
+        abc_df = pd.DataFrame({'Product': abc.index, 'Demand': abc.values, 'Cumulative%': cum_pct.values})
+        st.dataframe(abc_df.head(20), use_container_width=True)
+        fig6 = px.line(abc_df, x='Product', y='Cumulative%', markers=True)
+        st.plotly_chart(fig6, use_container_width=True)
+
+# --- TAB 4: STORE INSIGHTS ---
 with tab4:
-    st.header("🏬 Store-Level Analysis")
-    st.markdown("Evaluate demand and inventory dynamics across stores to spot overstocked or understocked locations.")
-
+    st.header("🏬 Store-level Analysis")
+    st.markdown("Compare demand, sales, and stock across stores. Identify high- or low-performing locations.")
     if 'Store' in filtered_df.columns:
-        st.markdown("**Bar Chart:** Demand Forecast by Store")
         store_demand = filtered_df.groupby('Store')['Demand Forecast'].sum().sort_values(ascending=False)
-        fig5 = px.bar(store_demand, y=store_demand.values, x=store_demand.index, labels={"x": "Store", "y": "Total Demand"})
-        st.plotly_chart(fig5, use_container_width=True)
+        st.markdown("**Demand Forecast by Store**")
+        fig7 = px.bar(store_demand, x=store_demand.index, y=store_demand.values, labels={"x": "Store", "y": "Total Demand"})
+        st.plotly_chart(fig7, use_container_width=True)
+        
+        if 'Stock' in filtered_df.columns:
+            store_stock = filtered_df.groupby('Store')['Stock'].sum()
+            st.markdown("**Stock by Store**")
+            fig8 = px.bar(store_stock, x=store_stock.index, y=store_stock.values, labels={"x": "Store", "y": "Total Stock"})
+            st.plotly_chart(fig8, use_container_width=True)
+            
+            # Stock vs demand scatter
+            store_compare = pd.DataFrame({'Demand': store_demand, 'Stock': store_stock}).dropna()
+            st.markdown("**Stock vs Demand Scatter by Store**")
+            fig9 = px.scatter(store_compare, x='Demand', y='Stock', text=store_compare.index)
+            st.plotly_chart(fig9, use_container_width=True)
+
+        if 'Sales' in filtered_df.columns:
+            store_sales = filtered_df.groupby('Store')['Sales'].sum()
+            st.markdown("**Sales by Store**")
+            fig10 = px.bar(store_sales, x=store_sales.index, y=store_sales.values, labels={"x": "Store", "y": "Total Sales"})
+            st.plotly_chart(fig10, use_container_width=True)
+
+# --- TAB 5: CATEGORY INSIGHTS ---
+with tab5:
+    st.header("📦 Category-level Insights")
+    st.markdown("Analyze demand and sales trends at the category level for strategic supply planning.")
+    if 'Category' in filtered_df.columns:
+        cat_demand = filtered_df.groupby('Category')['Demand Forecast'].sum().sort_values(ascending=False)
+        st.markdown("**Demand Forecast by Category**")
+        fig11 = px.bar(cat_demand, x=cat_demand.index, y=cat_demand.values, labels={"x": "Category", "y": "Total Demand"})
+        st.plotly_chart(fig11, use_container_width=True)
+        
+        if 'Sales' in filtered_df.columns:
+            cat_sales = filtered_df.groupby('Category')['Sales'].sum()
+            st.markdown("**Sales by Category (Pie Chart)**")
+            fig12 = px.pie(cat_sales, values=cat_sales.values, names=cat_sales.index)
+            st.plotly_chart(fig12, use_container_width=True)
 
         if 'Stock' in filtered_df.columns:
-            st.markdown("**Scatter Plot:** Stock vs Demand by Store")
-            store_stock = filtered_df.groupby('Store').agg({'Demand Forecast':'sum','Stock':'sum'})
-            fig6 = px.scatter(store_stock, x='Demand Forecast', y='Stock', text=store_stock.index)
-            st.plotly_chart(fig6, use_container_width=True)
+            cat_stock = filtered_df.groupby('Category')['Stock'].sum()
+            st.markdown("**Stock by Category**")
+            fig13 = px.bar(cat_stock, x=cat_stock.index, y=cat_stock.values, labels={"x": "Category", "y": "Total Stock"})
+            st.plotly_chart(fig13, use_container_width=True)
 
-# ----------- TAB 5: ADVANCED / CUSTOM ANALYSIS -----------
-with tab5:
-    st.header("🔬 Advanced and Custom Insights")
-    st.markdown("Drill deeper into inventory management with ABC analysis, heatmaps, pivot tables, or custom queries.")
+# --- TAB 6: ADVANCED ANALYSIS ---
+with tab6:
+    st.header("🔬 Advanced Insights")
+    st.markdown("Explore anomalies, outliers, and custom pivots for advanced supply chain decisions.")
 
-    # Example: ABC Analysis (80/20 rule for Products by Demand)
-    st.markdown("**ABC Analysis:** Products by Cumulative Demand")
-    if 'Product' in filtered_df.columns and 'Demand Forecast' in filtered_df.columns:
-        abc = filtered_df.groupby('Product')['Demand Forecast'].sum().sort_values(ascending=False)
-        total = abc.sum()
-        cumsum = abc.cumsum() / total
-        fig7 = px.bar(x=abc.index, y=abc.values, labels={'x':'Product','y':'Total Demand'})
-        st.plotly_chart(fig7, use_container_width=True)
-        st.dataframe(pd.DataFrame({'Product': abc.index, 'Demand': abc.values, 'Cumulative%': cumsum.values}).head(20))
+    # Outlier detection on Demand Forecast
+    st.markdown("**Demand Forecast Outlier Detection (Boxplot)**")
+    fig14 = px.box(filtered_df, y='Demand Forecast')
+    st.plotly_chart(fig14, use_container_width=True)
 
-    # Custom Table: Full filtered data
-    st.markdown("**Data Table:** Filtered Dataset")
-    st.dataframe(filtered_df.head(100))
+    # Heatmap: Product vs Store by Demand
+    if 'Product' in filtered_df.columns and 'Store' in filtered_df.columns:
+        st.markdown("**Heatmap: Demand Forecast by Store and Product**")
+        pivot = filtered_df.pivot_table(index='Product', columns='Store', values='Demand Forecast', aggfunc='sum', fill_value=0)
+        fig15 = px.imshow(pivot, aspect='auto')
+        st.plotly_chart(fig15, use_container_width=True)
+    
+    # Stockout alert table
+    if 'Stockout' in filtered_df.columns:
+        st.markdown("**Stockout Events Table**")
+        st.dataframe(filtered_df[filtered_df['Stockout'] > 0], use_container_width=True)
+    
+    # Download filtered data
+    st.markdown("**Download Filtered Data**")
+    csv = filtered_df.to_csv(index=False).encode()
+    st.download_button("Download CSV", csv, "filtered_inventory.csv", "text/csv")
 
-# ----------- EXTRAS: EXPORT DATA, MORE CHARTS, ETC -----------
-# (Add more as needed to reach 20+ visuals: heatmaps, histograms, boxplots, timeseries decomposition, outlier detection, low-stock alerts, etc.)
+    st.markdown("**Custom Pivot Table (Demo)**")
+    if 'Store' in filtered_df.columns and 'Category' in filtered_df.columns:
+        pivot2 = pd.pivot_table(filtered_df, values='Demand Forecast', index='Store', columns='Category', aggfunc=np.sum, fill_value=0)
+        st.dataframe(pivot2)
 
+    st.markdown("**Histogram: Demand Forecast Distribution**")
+    fig16 = px.histogram(filtered_df, x='Demand Forecast', nbins=30)
+    st.plotly_chart(fig16, use_container_width=True)
+
+    # More: add your own pivots, time trends, histograms, boxplots, custom queries as needed!
+
+# --- END OF APP ---
